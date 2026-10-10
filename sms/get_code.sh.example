@@ -1,0 +1,28 @@
+#!/bin/bash
+# SMS_SCRIPT 示例：自定义验证码获取脚本模板
+#
+# 契约:
+#   - 第一个参数 $1 = 过滤时间戳（毫秒，图形验证码提交时刻），用于忽略旧短信
+#   - stdout 只输出验证码文本（3-8 位字母数字），不要输出其他任何内容
+#   - 获取失败时以非 0 退出码退出（login.exp 会做指数退避重试，最多 10 次）
+#
+# 挂载方式（docker-compose.yml）:
+#   volumes:
+#     - ./sms:/sms
+# 然后在 .env 中设置:
+#   SMS_SCRIPT=/sms/get_code.sh
+
+AFTER_MS="${1:-0}"
+
+# TODO: 在此实现你的取码逻辑，例如轮询你自己的短信网关:
+#   resp=$(curl -sS --connect-timeout 10 --max-time 15 "https://your-sms-api/latest?after=${AFTER_MS}")
+#   code=$(echo "$resp" | jq -r '.item.content' | grep -oE '[0-9]{6}')
+
+code=""
+
+if [ -z "$code" ]; then
+    echo "未能获取验证码" >&2
+    exit 1
+fi
+
+echo "$code"

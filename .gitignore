@@ -1,0 +1,13 @@
+# 运行时环境变量（含账号密码）
+.env
+
+# 本地构建产物
+*.rpm
+imageCode.jpg
+code.jpg
+get_code.sh
+
+# 微信/编辑器
+.vscode/
+.idea/
+*.swp

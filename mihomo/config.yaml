@@ -1,0 +1,24 @@
+# mihomo 参考配置：仅做对外暴露，把外部请求以 DIRECT 方式从容器发出，
+# 出站流量由容器内的 AOne 服务接管。
+# 实际部署时挂载 ./mihomo 到容器 /etc/mihomo，端口修改后需同步 docker-compose.yml 的 ports。
+
+mixed-port: 7890
+allow-lan: true
+bind-address: "*"
+mode: rule
+log-level: info
+external-controller: 0.0.0.0:9090
+
+# 容器内不做自定义 DNS 解析，走系统 DNS（由 AOne 接管后按其网络策略处理）
+dns:
+  enable: false
+
+profile:
+  store-selected: false
+
+proxies: []
+
+proxy-groups: []
+
+rules:
+  - MATCH,DIRECT

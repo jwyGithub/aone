@@ -1,0 +1,36 @@
+services:
+  aone:
+    build: .
+    image: aone:latest
+    container_name: aone
+    restart: unless-stopped
+    environment:
+      AONE_CORP: ${AONE_CORP:?请在 .env 中设置 AONE_CORP}
+      AONE_USER: ${AONE_USER:?请在 .env 中设置 AONE_USER}
+      AONE_PASS: ${AONE_PASS:?请在 .env 中设置 AONE_PASS}
+      SMS_SCRIPT: ${SMS_SCRIPT:?请在 .env 中设置 SMS_SCRIPT（验证码脚本路径）}
+    volumes:
+      # AOne 的配置/登录态写在 /root/.cache（按 uid 查 /etc/passwd 得到，
+      # 不读 $HOME），故把 volume 挂在 /root 实现持久化
+      - aone-data:/root
+      # mihomo 配置（含监听端口定义，对外端口用 ports 映射）
+      - ./mihomo:/etc/mihomo
+      # 自定义验证码脚本目录（SMS_SCRIPT 指向其中脚本，如 /sms/get_code.sh）
+      - ./sms:/sms
+    ports:
+      # mihomo 对外代理端口，与 mihomo/config.yaml 中 listener 端口一致
+      - "${MIHOMO_PORT:-7890}:${MIHOMO_PORT:-7890}"
+      # mihomo API（可选，便于观察状态）
+      - "127.0.0.1:9090:9090"
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  aone-data:

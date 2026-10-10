@@ -1,0 +1,75 @@
+#!/usr/bin/expect -f
+# 自动执行初始化
+# 实际交互流程（实测确认）:
+#   是否重新配置:y/n -> 请输入企业标识: -> 请输入用户名: -> 请输入密码:
+# 用法: config.exp <企业标识> <账号> <密码>
+
+set timeout 120
+set corp  [lindex $argv 0]
+set user  [lindex $argv 1]
+set pass  [lindex $argv 2]
+
+if {$corp eq "" || $user eq "" || $pass eq ""} {
+    puts stderr "用法: config.exp <企业标识> <账号> <密码>"
+    exit 64
+}
+
+log_user 1
+
+spawn AOne --config
+
+# 统一状态循环：按提示顺序逐项喂入，用标志位防止重复发送
+set sent_corp 0
+set sent_user 0
+set sent_pass 0
+
+expect {
+    -re "是否重新配置.*y/n" {
+        send -- "y\r"
+        exp_continue
+    }
+    -re "请输入企业标识" {
+        if {$sent_corp} { exp_continue }
+        set sent_corp 1
+        send -- "$corp\r"
+        exp_continue
+    }
+    -re "请输入用户名|请输入账号" {
+        if {$sent_user} { exp_continue }
+        set sent_user 1
+        send -- "$user\r"
+        exp_continue
+    }
+    -re "请输入用户密码|请输入密码" {
+        if {$sent_pass} { exp_continue }
+        set sent_pass 1
+        send -- "$pass\r"
+        exp_continue
+    }
+    -re "成功|完成" {
+        puts "CONFIG_DONE"
+        exit 0
+    }
+    -re "失败|错误" {
+        puts stderr "初始化失败"
+        exit 7
+    }
+    eof {
+        # 配置完成后程序可能直接退出，三项都已发送则视为成功
+        if {$sent_pass} {
+            puts "CONFIG_DONE"
+            exit 0
+        }
+        puts stderr "AOne --config 提前退出"
+        exit 2
+    }
+    timeout {
+        if {$sent_pass} {
+            # 密码已提交但无明确成功提示，视为完成
+            puts "CONFIG_DONE"
+            exit 0
+        }
+        puts stderr "等待配置提示超时 (corp=$sent_corp user=$sent_user pass=$sent_pass)"
+        exit 1
+    }
+}

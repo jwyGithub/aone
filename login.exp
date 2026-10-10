@@ -1,0 +1,215 @@
+#!/usr/bin/expect -f
+
+#   等待验证码图片 -> 容器内 OCR 识别 -> 提交 -> 拉取短信验证码 -> 提交
+# 用法: login.exp <SMS_SCRIPT>
+#
+# 退出码: 0=登录成功(AOne 常驻运行中)  2=图形验证码错误  3=短信验证码问题  其他=异常
+
+set timeout 120
+set sms_script [lindex $argv 0]
+set imagefile "imageCode.jpg"
+set workdir [pwd]
+
+if {$sms_script eq ""} {
+    puts stderr "用法: login.exp <SMS_SCRIPT>"
+    exit 64
+}
+
+log_user 1
+
+proc logmsg {msg} {
+    send_user "\n\[login.exp\] $msg\n"
+}
+
+# 拉取短信验证码：最多重试 10 次，指数退避
+# 执行 SMS_SCRIPT，第一个参数为过滤时间戳(毫秒)，stdout 输出纯验证码(3-8位字母数字)
+proc fetch_sms_code {after_ms script} {
+    set max_retries 10
+    set base_delay 1
+    set max_delay 60
+
+    for {set attempt 1} {$attempt <= $max_retries} {incr attempt} {
+        logmsg "第 ${attempt}/${max_retries} 次执行验证码脚本: $script"
+        # 脚本 stderr 是日志（可能多行），重定向到临时文件避免干扰 stdout 校验，
+        # 同时规避 Tcl exec 把"stderr 有输出"当错误的坑
+        set errfile "/tmp/sms_script_err.log"
+        if {[catch {exec $script $after_ms 2> $errfile} result]} {
+            if {[file exists $errfile]} {
+                set f [open $errfile r]; set errlog [read $f]; close $f
+                logmsg "验证码脚本执行失败: [string trim $errlog]"
+            } else {
+                logmsg "验证码脚本执行失败: $result"
+            }
+        } else {
+            set sms_code [string trim $result]
+            if {[regexp {^[A-Za-z0-9]{3,8}$} $sms_code]} {
+                logmsg "脚本返回验证码: $sms_code"
+                return $sms_code
+            }
+            logmsg "脚本输出不符合验证码格式: $result"
+        }
+        if {$attempt < $max_retries} {
+            set delay [expr {$base_delay * (1 << ($attempt - 1))}]
+            if {$delay > $max_delay} {
+                set delay $max_delay
+            }
+            logmsg "等待 ${delay}s 后重试..."
+            sleep $delay
+        }
+    }
+    return ""
+}
+
+cd $workdir
+
+# 清理旧图片
+foreach f [list $imagefile "code.jpg"] {
+    if {[file exists $f]} {
+        file delete -force $f
+    }
+}
+
+spawn AOne --login
+logmsg "已启动 AOne --login"
+
+# 会话已存在时直接输出"用户已登录"，无需验证码
+expect {
+    -re "用户已登录" {
+        logmsg "用户已登录，会话有效"
+        exit 11
+    }
+    -re "图形验证码文件.*已保存在当前目录" {
+        logmsg "AOne 已生成验证码图片"
+    }
+    timeout {
+        logmsg "等待验证码图片提示超时"
+        exit 1
+    }
+    eof {
+        logmsg "AOne 提前退出"
+        exit 1
+    }
+}
+
+# 等待图片文件出现并写入稳定
+set found 0
+for {set i 0} {$i < 20} {incr i} {
+    if {[file exists $imagefile]} {
+        set found 1
+        break
+    }
+    sleep 1
+}
+if {!$found} {
+    logmsg "未找到验证码图片 $imagefile"
+    exit 1
+}
+
+set last_size -1
+set stable_count 0
+for {set i 0} {$i < 10} {incr i} {
+    set current_size [file size $imagefile]
+    if {$current_size == $last_size && $current_size > 0} {
+        incr stable_count
+    } else {
+        set stable_count 0
+    }
+    if {$stable_count >= 2} {
+        break
+    }
+    set last_size $current_size
+    sleep 1
+}
+logmsg "验证码图片已稳定，开始 OCR 识别..."
+
+# 容器内 OCR 识别（ddddocr）
+if {[catch {exec python3 /usr/local/bin/ocr.py $workdir/$imagefile} ocr_result]} {
+    logmsg "OCR 执行失败: $ocr_result"
+    exit 1
+}
+set verify_code [string trim $ocr_result]
+logmsg "OCR 识别结果: $verify_code"
+
+if {![regexp {^[A-Za-z0-9]{3,8}$} $verify_code]} {
+    logmsg "OCR 结果不符合验证码格式，直接重试"
+    exit 2
+}
+
+# 提交图形验证码
+sleep 1
+send -- "$verify_code\r"
+
+# 记录发送时间（毫秒），过滤旧短信
+set sms_after_ms [clock milliseconds]
+logmsg "已提交图形验证码，短信过滤时间戳: $sms_after_ms"
+
+expect {
+    -re "图片验证码错误|图形验证码错误" {
+        logmsg "图形验证码错误"
+        exit 2
+    }
+    -re "请输入短信验证码|短信验证码" {
+        logmsg "进入短信验证码环节"
+        sleep 5
+        set sms_code [fetch_sms_code $sms_after_ms $sms_script]
+        if {$sms_code eq ""} {
+            logmsg "重试 10 次仍未获取到短信验证码"
+            exit 3
+        }
+        logmsg "提交短信验证码: $sms_code"
+        send -- "$sms_code\r"
+
+        expect {
+            -re "登录成功" {
+                logmsg "登录成功"
+                # CLI 打印"隧道创建完毕...登录成功"后会正常退出（隧道由 ctEAO 维持）
+                set timeout 60
+                expect {
+                    eof {
+                        logmsg "CLI 已退出，隧道由 ctEAO 守护进程维持"
+                        exit 0
+                    }
+                    timeout {
+                        logmsg "CLI 未退出，继续持有（视为常驻模式）"
+                        set timeout -1
+                        expect eof { exit 0 }
+                    }
+                }
+            }
+            -re "验证码错误|短信验证码错误" {
+                logmsg "短信验证码错误"
+                exit 3
+            }
+            eof {
+                logmsg "AOne 在登录结果确认前退出"
+                exit 10
+            }
+            timeout {
+                logmsg "等待登录结果超时"
+                exit 1
+            }
+        }
+    }
+    -re "发送验证码服务调用失败" {
+        logmsg "发送验证码服务调用失败"
+        exit 3
+    }
+    -re "登录成功" {
+        logmsg "登录成功（无短信环节）"
+        set timeout -1
+        expect {
+            eof {
+                logmsg "AOne 进程退出"
+                exit 10
+            }
+        }
+    }
+    eof {
+        logmsg "AOne 提前退出"
+        exit 10
+    }
+    timeout {
+        logmsg "等待响应超时"
+        exit 1
+    }
+}
