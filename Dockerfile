@@ -7,7 +7,9 @@ ARG PIP_MIRROR=https://pypi.org/simple
 # glibc-langpack-zh 提供 UTF-8 locale，否则 expect 发送中文会变 ????
 # net-tools 提供 route 命令，ctEAO 配置隧道路由依赖它
 # tzdata + TZ 时区设为 UTC+8
-RUN dnf -y install expect iproute python3-pip glibc-langpack-zh net-tools tzdata && \
+# iptables: ctEAO 登录后创建 DNS 劫持 DNAT 规则(udp 53 -> 127.0.0.1:61119)必需，
+# 缺失会导致内网域名解析到公网不可达入口
+RUN dnf -y install expect iproute python3-pip glibc-langpack-zh net-tools tzdata iptables && \
     dnf clean all && \
     echo "export LANG=C.UTF-8" > /etc/profile.d/lang.sh
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Asia/Shanghai
