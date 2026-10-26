@@ -8,6 +8,9 @@ AONE_PASS="${AONE_PASS:?需要设置 AONE_PASS}"
 SMS_SCRIPT="${SMS_SCRIPT:?需要设置 SMS_SCRIPT（验证码脚本路径）}"
 AONE_HOME="${AONE_HOME:-/data/aone}"
 MARKER="$AONE_HOME/.configured"
+# 自动登录时间段（容器本地时间，格式 HH:MM:SS-HH:MM:SS，分/秒可省略如 8-22、8:30-22:00）。
+# 仅当检测到下线且当前时间落在该范围内才自动拉起登录。默认 00:00:00-23:59:59（全天）。
+AUTO_LOGIN_TIME_RANGE="${AUTO_LOGIN_TIME_RANGE:-00:00:00-23:59:59}"
 
 if [ ! -x "$SMS_SCRIPT" ]; then
     echo "[entrypoint] 错误: SMS_SCRIPT=$SMS_SCRIPT 不存在或不可执行" >&2
@@ -72,6 +75,51 @@ fi
 # AOne --login 是 CLI：首次登录输出"登录成功"后 CLI 会退出，隧道由 ctEAO 维持。
 # 会话约 8 小时后失效，表现为 `AOne --status` 输出"用户已下线..."。
 # 因此每 60s 检查一次：ctEAO 死了 -> 重启；状态为已下线/无会话 -> 执行 login.exp。
+# 将 "H[:MM[:SS]]" 解析为自 0 点起的秒数并打印；格式非法时返回 1
+_parse_hms() {
+    local t h m s rest
+    t="${1//[[:space:]]/}"
+    h="${t%%:*}"
+    rest="${t#*:}"
+    if [ "$t" = "$h" ]; then
+        m=0; s=0
+    else
+        m="${rest%%:*}"
+        if [ "$rest" = "$m" ]; then
+            s=0
+        else
+            s="${rest#*:}"
+        fi
+    fi
+    case "$h" in ''|*[!0-9]*) return 1 ;; esac
+    case "$m" in ''|*[!0-9]*) return 1 ;; esac
+    case "$s" in ''|*[!0-9]*) return 1 ;; esac
+    h=$((10#$h)); m=$((10#$m)); s=$((10#$s))
+    { [ "$h" -ge 0 ] && [ "$h" -le 23 ]; } || return 1
+    { [ "$m" -ge 0 ] && [ "$m" -le 59 ]; } || return 1
+    { [ "$s" -ge 0 ] && [ "$s" -le 59 ]; } || return 1
+    echo $((h * 3600 + m * 60 + s))
+}
+
+# 当前时间是否落在 AUTO_LOGIN_TIME_RANGE 内。0=在范围内（允许登录）；1=不在范围内（跳过）。
+# 配置为空或非法时一律视为不限制（返回 0），避免因配置错误而永不登录。
+in_login_window() {
+    local range start end now
+    range="${AUTO_LOGIN_TIME_RANGE//[[:space:]]/}"
+    [ -z "$range" ] && return 0
+    start=$(_parse_hms "${range%%-*}") || { log "自动登录时间段配置非法: '$AUTO_LOGIN_TIME_RANGE'，视为不限制"; return 0; }
+    end=$(_parse_hms "${range#*-}")    || { log "自动登录时间段配置非法: '$AUTO_LOGIN_TIME_RANGE'，视为不限制"; return 0; }
+    now=$((10#$(date +%H) * 3600 + 10#$(date +%M) * 60 + 10#$(date +%S)))
+    if [ "$start" -le "$end" ]; then
+        # 同日区间，如 8:00-22:00
+        { [ "$now" -ge "$start" ] && [ "$now" -le "$end" ]; } && return 0
+    else
+        # 跨午夜区间，如 22:00-06:00
+        { [ "$now" -ge "$start" ] || [ "$now" -le "$end" ]; } && return 0
+    fi
+    return 1
+}
+
 check_session() {
     # 返回 0 = 在线；1 = 已下线或状态未知（需登录）
     # status 实测输出: 在线="用户已上线..."  下线="用户已下线..."
@@ -103,6 +151,8 @@ while :; do
 
     if check_session; then
         log "AOne 会话有效，隧道运行中"
+    elif ! in_login_window; then
+        log "会话无效，但当前时间不在自动登录时间段 ($AUTO_LOGIN_TIME_RANGE) 内，跳过本次自动登录"
     else
         log "会话无效，执行登录..."
         login.exp "$SMS_SCRIPT"

@@ -33,6 +33,11 @@ RUN curl -fSL --connect-timeout 60 --retry 5 --retry-delay 3 -o /tmp/aone.rpm "$
 # 最小 OCR（ddddocr，专为图形验证码训练的轻量模型）
 RUN pip3 install --no-cache-dir -i ${PIP_MIRROR} ddddocr
 
+# JS 运行时（支持 .js 版 SMS_SCRIPT）。关掉 weak deps 并不装 docs/i18n 以控制体积，
+# Node 18+ 自带 fetch，简单取码脚本无需 npm 依赖
+RUN dnf -y install --setopt=install_weak_deps=False nodejs npm && \
+    dnf clean all
+
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY config.exp /usr/local/bin/config.exp
 COPY login.exp /usr/local/bin/login.exp

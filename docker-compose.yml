@@ -9,6 +9,8 @@ services:
       AONE_USER: ${AONE_USER:?请在 .env 中设置 AONE_USER}
       AONE_PASS: ${AONE_PASS:?请在 .env 中设置 AONE_PASS}
       SMS_SCRIPT: ${SMS_SCRIPT:?请在 .env 中设置 SMS_SCRIPT（验证码脚本路径）}
+      # 自动登录时间段（容器本地时间 HH:MM:SS-HH:MM:SS）。仅在此范围内检测到下线才自动拉起登录，默认全天 00:00:00-23:59:59
+      AUTO_LOGIN_TIME_RANGE: ${AUTO_LOGIN_TIME_RANGE:-00:00:00-23:59:59}
     volumes:
       # AOne 的配置/登录态写在 /root/.cache（按 uid 查 /etc/passwd 得到，
       # 不读 $HOME），故把 volume 挂在 /root 实现持久化

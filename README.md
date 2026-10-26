@@ -42,7 +42,7 @@ curl -x http://127.0.0.1:7890 https://目标服务/
 | `AONE_CORP` | 无（必填） | 企业标识 |
 | `AONE_USER` | 无（必填） | 账号 |
 | `AONE_PASS` | 无（必填） | 密码 |
-| `SMS_SCRIPT` | 无（必填） | 验证码脚本容器内路径，如 `/sms/get_code.sh` |
+| `SMS_SCRIPT` | 无（必填） | 验证码脚本容器内路径，支持 `.sh`/`.py`/`.js`，如 `/sms/get_code.sh` |
 | `MIHOMO_PORT` | 7890 | 对外代理端口，需与 mihomo/config.yaml 一致 |
 
 挂载：
@@ -53,7 +53,7 @@ curl -x http://127.0.0.1:7890 https://目标服务/
 | `sms/` | `/sms` | 验证码脚本目录 |
 | `aone-data` volume | `/root` | AOne 配置/登录态持久化 |
 
-`SMS_SCRIPT` 契约：容器内可执行脚本；第一个参数为过滤时间戳（毫秒，图形验证码提交时刻），用于忽略旧短信；**stdout 只输出验证码文本**（3-8 位字母数字），日志写 stderr；非 0 退出视为获取失败（自动指数退避重试，最多 10 次）。
+`SMS_SCRIPT` 契约：支持 `.sh` / `.py` / `.js`（按扩展名自动用 bash / python3 / node 调用，无需可执行权限）；第一个参数为过滤时间戳（毫秒，图形验证码提交时刻），用于忽略旧短信；**stdout 只输出验证码文本**（3-8 位字母数字），日志写 stderr；非 0 退出视为获取失败（自动指数退避重试，最多 10 次）。
 
 镜像构建（`docker compose build`）时从远端下载 aone/mihomo 的 rpm，构建机需可访问对应链接；可用 `--build-arg AONE_RPM_URL=...` / `MIHOMO_RPM_URL=...` 覆盖版本。
 

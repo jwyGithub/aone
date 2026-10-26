@@ -21,19 +21,32 @@ proc logmsg {msg} {
     send_user "\n\[login.exp\] $msg\n"
 }
 
+# 根据脚本扩展名选择解释器：.sh 用 bash，.py 用 python3，.js 用 node，
+# 其他按可执行文件直接运行（依赖 shebang + 可执行位）。
+# 用解释器显式调用，可同时支持 sh/python/js，且脚本无需加可执行权限。
+proc sms_script_cmd {script} {
+    switch -glob -nocase -- $script {
+        *.py    { return [list python3 $script] }
+        *.js    { return [list node $script] }
+        *.sh    { return [list bash $script] }
+        default { return [list $script] }
+    }
+}
+
 # 拉取短信验证码：最多重试 10 次，指数退避
 # 执行 SMS_SCRIPT，第一个参数为过滤时间戳(毫秒)，stdout 输出纯验证码(3-8位字母数字)
 proc fetch_sms_code {after_ms script} {
     set max_retries 10
     set base_delay 1
     set max_delay 60
+    set cmd [sms_script_cmd $script]
 
     for {set attempt 1} {$attempt <= $max_retries} {incr attempt} {
         logmsg "第 ${attempt}/${max_retries} 次执行验证码脚本: $script"
         # 脚本 stderr 是日志（可能多行），重定向到临时文件避免干扰 stdout 校验，
         # 同时规避 Tcl exec 把"stderr 有输出"当错误的坑
         set errfile "/tmp/sms_script_err.log"
-        if {[catch {exec $script $after_ms 2> $errfile} result]} {
+        if {[catch {exec {*}$cmd $after_ms 2> $errfile} result]} {
             if {[file exists $errfile]} {
                 set f [open $errfile r]; set errlog [read $f]; close $f
                 logmsg "验证码脚本执行失败: [string trim $errlog]"
